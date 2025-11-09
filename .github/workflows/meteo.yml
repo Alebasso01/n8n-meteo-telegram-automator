@@ -11,7 +11,7 @@ jobs:
   send:
     runs-on: ubuntu-latest
     env:
-      TZ: Europe/Rome        # use Italian timezone
+      TZ: Europe/Rome        # Use Italian timezone
       LAT: "44.4056"         # Genoa latitude
       LON: "8.9463"          # Genoa longitude
     steps:
@@ -39,11 +39,16 @@ jobs:
           MIN=$(TZ=$TZ date +'%M')
           DATETIME=$(TZ=$TZ date +'%d/%m %H:%M')
 
-          # Send ONLY at 08:00 local time (workflow runs every hour)
-          if [ "$HOUR" != "08" ]; then
-            echo "Outside target time (local time: $HOUR:$MIN). Exiting without sending."
-            echo "send=no" >> $GITHUB_OUTPUT
-            exit 0
+          # Force send if manually triggered from Actions
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run detected: forcing send now."
+          else
+            # Send ONLY at 08:00 local time when triggered by cron
+            if [ "$HOUR" != "08" ]; then
+              echo "Outside target time (local time: $HOUR:$MIN). Exiting without sending."
+              echo "send=no" >> $GITHUB_OUTPUT
+              exit 0
+            fi
           fi
 
           printf "☀️ Today's Weather – Genoa\nCurrent: %s°C\nMax/Min: %s°C / %s°C\nRain chance: %s%%\n(%s)\n" \
@@ -55,7 +60,7 @@ jobs:
           cat msg.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Send to Telegram (only at 08:00 local time)
+      - name: Send to Telegram (manual or 08:00 local time)
         if: steps.meteo.outputs.send == 'yes'
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
