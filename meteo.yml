@@ -1,0 +1,67 @@
+name: Weather → Telegram (Genoa)
+
+on:
+  # Automatic execution: every HOUR (UTC)
+  schedule:
+    - cron: '0 * * * *'      # every hour
+  # Manual run from the "Actions" tab
+  workflow_dispatch: {}
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Rome        # use Italian timezone
+      LAT: "44.4056"         # Genoa latitude
+      LON: "8.9463"          # Genoa longitude
+    steps:
+      - name: Show local time (debug)
+        run: |
+          date
+          TZ=$TZ date
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Fetch weather data from Open-Meteo
+        id: meteo
+        run: |
+          URL="https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&timezone=Europe%2FRome&current=temperature_2m,relative_humidity_2m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+          curl -fsSL "$URL" -o meteo.json
+
+          NOW=$(jq -r '.current.temperature_2m' meteo.json)
+          TMAX=$(jq -r '.daily.temperature_2m_max[0]' meteo.json)
+          TMIN=$(jq -r '.daily.temperature_2m_min[0]' meteo.json)
+          RAIN=$(jq -r '.daily.precipitation_probability_max[0]' meteo.json)
+          HOUR=$(TZ=$TZ date +'%H')
+          MIN=$(TZ=$TZ date +'%M')
+          DATETIME=$(TZ=$TZ date +'%d/%m %H:%M')
+
+          # Send ONLY at 08:00 local time (workflow runs every hour)
+          if [ "$HOUR" != "08" ]; then
+            echo "Outside target time (local time: $HOUR:$MIN). Exiting without sending."
+            echo "send=no" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          printf "☀️ Today's Weather – Genoa\nCurrent: %s°C\nMax/Min: %s°C / %s°C\nRain chance: %s%%\n(%s)\n" \
+            "$NOW" "$TMAX" "$TMIN" "$RAIN" "$DATETIME" > msg.txt
+
+          # Export message content for the next step
+          echo "send=yes" >> $GITHUB_OUTPUT
+          echo "MSG<<EOF" >> $GITHUB_OUTPUT
+          cat msg.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send to Telegram (only at 08:00 local time)
+        if: steps.meteo.outputs.send == 'yes'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          MSG: ${{ steps.meteo.outputs.MSG }}
+        run: |
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            --data-urlencode text="${MSG}"
